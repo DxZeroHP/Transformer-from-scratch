@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Decoder Chatbot</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f3f4f6;
+      color: #111827;
+    }
+    .app {
+      max-width: 700px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 {
+      margin-bottom: 8px;
+    }
+    .chat-window {
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+      background: #ffffff;
+      min-height: 400px;
+      padding: 16px;
+      overflow-y: auto;
+      margin-bottom: 16px;
+    }
+    .message {
+      margin-bottom: 16px;
+      line-height: 1.6;
+    }
+    .message.user {
+      text-align: right;
+    }
+    .message.assistant {
+      text-align: left;
+    }
+    .message span {
+      display: inline-block;
+      padding: 10px 14px;
+      border-radius: 16px;
+      max-width: 80%;
+    }
+    .message.user span {
+      background: #2563eb;
+      color: #ffffff;
+    }
+    .message.assistant span {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    form {
+      display: flex;
+      gap: 8px;
+    }
+    input[type="text"] {
+      flex: 1;
+      border: 1px solid #d1d5db;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 16px;
+    }
+    button {
+      border: none;
+      border-radius: 12px;
+      padding: 12px 18px;
+      background: #2563eb;
+      color: #fff;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+    .info {
+      margin-bottom: 16px;
+      color: #374151;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>Decoder Chatbot</h1>
+    <p class="info">Enter a message below and the model will generate a reply. Conversation memory is preserved in the current chat session.</p>
+    <div class="chat-window" id="chatWindow"></div>
+    <form id="chatForm">
+      <input id="userInput" type="text" placeholder="Say something..." autocomplete="off" />
+      <button type="submit">Send</button>
+    </form>
+  </div>
+  <script>
+    const chatWindow = document.getElementById("chatWindow");
+    const chatForm = document.getElementById("chatForm");
+    const userInput = document.getElementById("userInput");
+
+    function appendMessage(role, text) {
+      const wrapper = document.createElement("div");
+      wrapper.className = `message ${role}`;
+      const bubble = document.createElement("span");
+      bubble.textContent = text;
+      wrapper.appendChild(bubble);
+      chatWindow.appendChild(wrapper);
+      chatWindow.scrollTop = chatWindow.scrollHeight;
+    }
+
+    async function sendMessage(message) {
+      appendMessage("user", message);
+      userInput.value = "";
+      userInput.disabled = true;
+      const button = chatForm.querySelector("button");
+      button.disabled = true;
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Server error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        appendMessage("assistant", data.reply || "[No reply returned]");
+      } catch (error) {
+        appendMessage("assistant", `Error: ${error.message}`);
+      } finally {
+        userInput.disabled = false;
+        button.disabled = false;
+        userInput.focus();
+      }
+    }
+
+    chatForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const message = userInput.value.trim();
+      if (!message) return;
+      sendMessage(message);
+    });
+
+    userInput.focus();
+  </script>
+</body>
+</html>

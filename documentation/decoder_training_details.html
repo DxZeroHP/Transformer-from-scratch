@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Decoder-Only Transformer: Training Deep Dive</title>
+
+  <!-- MathJax for LaTeX rendering -->
+  <script>
+    MathJax = {
+      tex: {
+        inlineMath: [['$', '$']],
+        displayMath: [['$$', '$$']],
+        tags: 'ams'
+      }
+    };
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+    :root {
+      --accent: #4f6ef7;
+      --accent-light: #e8ecff;
+      --text: #1a1d2e;
+      --text-muted: #6b7280;
+      --border: #e2e5f0;
+      --bg: #ffffff;
+      --bg-alt: #f8f9fc;
+      --code-bg: #1e1e2e;
+      --code-text: #cdd6f4;
+      --note-bg: #eff6ff;
+      --note-border: #3b82f6;
+      --tip-bg: #f0fdf4;
+      --tip-border: #22c55e;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      font-size: 15px;
+      line-height: 1.8;
+      color: var(--text);
+      background: var(--bg);
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 48px 40px 80px;
+    }
+
+    /* ── Cover ── */
+    .cover {
+      text-align: center;
+      padding: 60px 0 48px;
+      border-bottom: 2px solid var(--border);
+      margin-bottom: 48px;
+    }
+
+    .cover h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+
+    .cover .subtitle {
+      font-size: 1.05rem;
+      color: var(--text-muted);
+      font-weight: 400;
+      margin-bottom: 20px;
+    }
+
+    .cover .badge {
+      display: inline-block;
+      background: var(--accent-light);
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 4px 14px;
+      border-radius: 20px;
+      margin: 0 4px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Headings ── */
+    h2 {
+      font-size: 1.55rem;
+      font-weight: 700;
+      color: var(--text);
+      margin: 52px 0 16px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--accent);
+    }
+
+    h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin: 28px 0 10px;
+    }
+
+    h4 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin: 20px 0 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Step banners ── */
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: linear-gradient(135deg, var(--accent) 0%, #6c83f5 100%);
+      color: white;
+      border-radius: 12px;
+      padding: 18px 24px;
+      margin: 48px 0 20px;
+    }
+
+    .step-num {
+      font-size: 1.6rem;
+      font-weight: 800;
+      opacity: 0.9;
+      min-width: 40px;
+    }
+
+    .step-title-wrap {
+      flex: 1;
+    }
+
+    .step-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+
+    .step-module {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      opacity: 0.85;
+      margin-top: 2px;
+    }
+
+    /* ── Paragraphs ── */
+    p {
+      margin: 10px 0;
+      color: var(--text);
+    }
+
+    /* ── Tables ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 0.9rem;
+    }
+
+    th {
+      background: var(--accent);
+      color: white;
+      padding: 10px 16px;
+      text-align: left;
+      font-weight: 600;
+    }
+
+    td {
+      padding: 9px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tr:nth-child(even) td {
+      background: var(--bg-alt);
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* ── Code blocks ── */
+    pre {
+      background: var(--code-bg);
+      color: var(--code-text);
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin: 16px 0;
+      overflow-x: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.82rem;
+      line-height: 1.7;
+    }
+
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85em;
+      background: var(--accent-light);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    pre code {
+      background: none;
+      color: inherit;
+      padding: 0;
+    }
+
+    /* ── Math blocks ── */
+    .math-block {
+      background: var(--bg-alt);
+      border-left: 4px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      padding: 16px 24px;
+      margin: 16px 0;
+      overflow-x: auto;
+    }
+
+    /* ── Callout boxes ── */
+    .note {
+      background: var(--note-bg);
+      border-left: 4px solid var(--note-border);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 18px;
+      margin: 14px 0;
+      font-size: 0.9rem;
+    }
+
+    .note strong {
+      color: var(--note-border);
+    }
+
+    .tip {
+      background: var(--tip-bg);
+      border-left: 4px solid var(--tip-border);
+      border-radius: 0 8px 8px 0;
+      padding: 12px 18px;
+      margin: 14px 0;
+      font-size: 0.9rem;
+    }
+
+    .tip strong {
+      color: #16a34a;
+    }
+
+    /* ── Pipeline diagram ── */
+    .pipeline {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0;
+      margin: 24px 0;
+      overflow-x: auto;
+    }
+
+    .pipeline-box {
+      background: var(--accent-light);
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--accent);
+      white-space: nowrap;
+      text-align: center;
+    }
+
+    .pipeline-arrow {
+      color: var(--accent);
+      font-size: 1.1rem;
+      padding: 0 6px;
+      flex-shrink: 0;
+    }
+
+    /* ── Block diagram ── */
+    .block-diagram {
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin: 20px 0;
+      background: var(--bg-alt);
+    }
+
+    .block-row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin: 8px 0;
+    }
+
+    .block-node {
+      background: white;
+      border: 2px solid var(--accent);
+      border-radius: 8px;
+      padding: 8px 18px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text);
+      min-width: 200px;
+      text-align: center;
+    }
+
+    .block-node.highlight {
+      background: var(--accent);
+      color: white;
+    }
+
+    .block-arrow {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+    }
+
+    .block-side {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-style: italic;
+    }
+
+    /* ── Iteration checklist ── */
+    .checklist {
+      list-style: none;
+      padding: 0;
+      margin: 16px 0;
+    }
+
+    .checklist li {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+
+    .checklist li:last-child {
+      border-bottom: none;
+    }
+
+    .step-badge {
+      min-width: 28px;
+      height: 28px;
+      background: var(--accent);
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    .checklist-module {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* ── Page break for PDF ── */
+    @media print {
+      .step-header {
+        page-break-before: always;
+      }
+
+      pre {
+        white-space: pre-wrap;
+      }
+
+      body {
+        padding: 24px 32px;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 40px 0;
+    }
+
+    ul {
+      padding-left: 20px;
+      margin: 10px 0;
+    }
+
+    li {
+      margin: 4px 0;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ═══════════════════════════════ COVER ═══════════════════════════════ -->
+  <div class="cover">
+    <h1>Decoder-Only Transformer</h1>
+    <p class="subtitle">A complete walkthrough of training — math, modules, and mechanics</p>
+    <span class="badge">8.3M Parameters</span>
+    <span class="badge">4 Layers</span>
+    <span class="badge">8 Heads</span>
+    <span class="badge">d = 256</span>
+  </div>
+
+  <!-- ═══════════════════════════════ CONFIG ══════════════════════════════ -->
+  <h2>Model Configuration at a Glance</h2>
+
+  <table>
+    <tr>
+      <th>Hyperparameter</th>
+      <th>Value</th>
+      <th>Notes</th>
+    </tr>
+    <tr>
+      <td>Model Dimension ($d$)</td>
+      <td>256</td>
+      <td>Size of every token representation</td>
+    </tr>
+    <tr>
+      <td>Number of Layers</td>
+      <td>4</td>
+      <td>Stacked DecoderBlocks</td>
+    </tr>
+    <tr>
+      <td>Attention Heads ($h$)</td>
+      <td>8</td>
+      <td>Parallel attention subspaces</td>
+    </tr>
+    <tr>
+      <td>Head Dimension ($d_k = d/h$)</td>
+      <td>32</td>
+      <td>Per-head query/key/value size</td>
+    </tr>
+    <tr>
+      <td>FFN Hidden Dimension</td>
+      <td>1024</td>
+      <td>$4 \times d$, expanded for SwiGLU</td>
+    </tr>
+    <tr>
+      <td>Max Sequence Length</td>
+      <td>256</td>
+      <td>Tokens per training sample</td>
+    </tr>
+    <tr>
+      <td>Vocabulary Size</td>
+      <td>16,160</td>
+      <td>Includes special tokens</td>
+    </tr>
+    <tr>
+      <td>Total Parameters</td>
+      <td>~8.3M</td>
+      <td>Weight-tied input/output embeddings</td>
+    </tr>
+  </table>
+
+  <!-- ═══════════════════════════════ PIPELINE ════════════════════════════ -->
+  <h2>The Training Pipeline</h2>
+  <p>Every training iteration passes data through the same sequence of operations:</p>
+
+  <div class="pipeline">
+    <div class="pipeline-box">Token IDs</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">Embedder<br /><small>shift + embed + pos</small></div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">Block 1</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">Block 2</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">Block 3</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">Block 4</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">Logits</div>
+    <div class="pipeline-arrow">→</div>
+    <div class="pipeline-box">Loss → Backward → Update</div>
+  </div>
+
+  <p>Each <strong>DecoderBlock</strong> follows this internal layout:</p>
+
+  <div class="block-diagram">
+    <div class="block-row">
+      <div class="block-node highlight">Input $x$</div>
+    </div>
+    <div class="block-row">
+      <div class="block-arrow">↓</div>
+    </div>
+    <div class="block-row">
+      <div class="block-node">Multi-Head Self-Attention</div>
+      <div class="block-side">causal + padding mask</div>
+    </div>
+    <div class="block-row">
+      <div class="block-arrow">↓</div>
+    </div>
+    <div class="block-row">
+      <div class="block-node">Add &amp; LayerNorm #1</div>
+      <div class="block-side">$x \leftarrow \text{Norm}(x + \text{attn\_out})$</div>
+    </div>
+    <div class="block-row">
+      <div class="block-arrow">↓</div>
+    </div>
+    <div class="block-row">
+      <div class="block-node">Feed-Forward (SwiGLU)</div>
+      <div class="block-side">gated expansion → projection</div>
+    </div>
+    <div class="block-row">
+      <div class="block-arrow">↓</div>
+    </div>
+    <div class="block-row">
+      <div class="block-node">Add &amp; LayerNorm #2</div>
+      <div class="block-side">$x \leftarrow \text{Norm}(x + \text{ffn\_out})$</div>
+    </div>
+    <div class="block-row">
+      <div class="block-arrow">↓</div>
+    </div>
+    <div class="block-row">
+      <div class="block-node highlight">Output $x_{\text{out}}$</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════ STEP 1 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">01</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Input Shifting &amp; Embedding</div>
+      <div class="step-module">ShiftedOutputEmbedder</div>
+    </div>
+  </div>
+
+  <p>The model is trained to predict the <em>next</em> token. To set this up, the target sequence is <strong>shifted
+      right by one position</strong>, and the first slot is filled with the <code>&lt;bos&gt;</code> token. This means
+    at position $i$, the model has only seen tokens $0, 1, \ldots, i$ and must predict token $i+1$.</p>
+
+  <table>
+    <tr>
+      <th>Position</th>
+      <th>Target (what to predict)</th>
+      <th>Input (what the model sees)</th>
+    </tr>
+    <tr>
+      <td>0</td>
+      <td><code>&lt;user&gt;</code></td>
+      <td><code>&lt;bos&gt;</code></td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>Hello</td>
+      <td><code>&lt;user&gt;</code></td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><code>&lt;assistant&gt;</code></td>
+      <td>Hello</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Nice</td>
+      <td><code>&lt;assistant&gt;</code></td>
+    </tr>
+  </table>
+
+  <h3>Math</h3>
+
+  <div class="math-block">
+    $$X_{\text{shifted}} = [\text{bos},\; y_0,\; y_1,\; \ldots,\; y_{L-2}]$$
+  </div>
+
+  <div class="math-block">
+    $$H_0 = \underbrace{E[X_{\text{shifted}}]}_{\text{word embeddings}} \times \underbrace{\sqrt{d}}_{\text{scale}} +
+    \underbrace{P_{0:L}}_{\text{sinusoidal positions}}$$
+  </div>
+
+  <div class="note"><strong>Why scale by $\sqrt{d}$?</strong> Embeddings are initialized with small random values.
+    Scaling them up prevents sinusoidal positional encodings from dominating the signal and drowning out learned
+    semantics.</div>
+
+  <h4>Sinusoidal Positional Encoding</h4>
+  <div class="math-block">
+    $$P_{\text{pos},\, 2i} = \sin\!\left(\frac{\text{pos}}{10000^{2i/d}}\right), \qquad P_{\text{pos},\, 2i+1} =
+    \cos\!\left(\frac{\text{pos}}{10000^{2i/d}}\right)$$
+  </div>
+
+  <div class="tip"><strong>Padding note:</strong> Positions corresponding to <code>&lt;pad&gt;</code> tokens have their
+    embedding vectors zeroed out so they carry no signal into the network.</div>
+
+  <!-- ═══════════════════════════════ STEP 2 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">02</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Causal Multi-Head Self-Attention</div>
+      <div class="step-module">MultiHeadSelfAttention</div>
+    </div>
+  </div>
+
+  <p>Each token attends to all <em>previous</em> tokens to gather context. Multiple attention heads run in parallel,
+    each free to specialize in different relationships (syntax, coreference, topic, etc.).</p>
+
+  <h3>2a — Linear Projections</h3>
+  <p>For input $X \in \mathbb{R}^{B \times L \times d}$, three independent projections are computed:</p>
+
+  <div class="math-block">
+    $$Q = X W_q + b_q, \quad K = X W_k + b_k, \quad V = X W_v + b_v$$
+    $$W_q,\, W_k,\, W_v,\, W_o \;\in\; \mathbb{R}^{d \times d}$$
+  </div>
+
+  <h3>2b — Split into Heads</h3>
+  <p>Reshape $Q, K, V$ from shape $(B, L, d)$ to $(B, h, L, d_k)$ where $d_k = d / h = 32$. Each head operates
+    independently in its own $d_k$-dimensional subspace.</p>
+
+  <h3>2c — Scaled Dot-Product Scores</h3>
+  <div class="math-block">
+    $$S = \frac{Q K^T}{\sqrt{d_k}} \quad \in \mathbb{R}^{B \times h \times L \times L}$$
+  </div>
+
+  <div class="note"><strong>Why divide by $\sqrt{d_k}$?</strong> Without scaling, dot products grow proportionally to
+    $d_k$, pushing softmax into saturation zones where gradients nearly vanish.</div>
+
+  <h3>2d — Masking</h3>
+
+  <table>
+    <tr>
+      <th>Mask</th>
+      <th>What it does</th>
+    </tr>
+    <tr>
+      <td><strong>Causal mask</strong> (upper triangle)</td>
+      <td>Sets scores where $j > i$ to $-\infty$, so softmax gives them zero weight. Token $i$ cannot "see" the future.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Padding mask</strong></td>
+      <td>Sets scores for <code>&lt;pad&gt;</code> key positions to $-\infty$ so they never contribute to any context
+        vector.</td>
+    </tr>
+  </table>
+
+  <h3>2e — Softmax and Weighted Sum</h3>
+  <div class="math-block">
+    $$A = \text{softmax}(S, \;\text{dim}=-1)$$
+    $$\text{Context} = A \cdot V$$
+  </div>
+
+  <h3>2f — Output Projection</h3>
+  <p>Concatenate all heads $(B, h, L, d_k) \to (B, L, d)$, then project:</p>
+  <div class="math-block">
+    $$\text{Out} = \text{Context} \cdot W_o + b_o$$
+  </div>
+
+  <h3>2g — Manual Backward Pass</h3>
+  <p>Given upstream gradient $dY$ from the next layer:</p>
+
+  <div class="math-block">
+    $$dW_o = \text{Context}^T dY, \quad db_o = \sum dY, \quad d\text{Context} = dY\, W_o^T$$
+  </div>
+
+  <p>Softmax backward (using the Jacobian identity):</p>
+  <div class="math-block">
+    $$dS = A \odot \left(d\text{Context} \cdot V^T \;-\; \sum_k \bigl(d\text{Context} \cdot V^T\bigr)_k A_k\right)$$
+  </div>
+
+  <p>Masked positions are zeroed in $dS$. Then:</p>
+  <div class="math-block">
+    $$dQ = \frac{dS \cdot K}{\sqrt{d_k}}, \quad dK = \frac{dS^T \cdot Q}{\sqrt{d_k}}, \quad dV = A^T \cdot
+    d\text{Context}$$
+  </div>
+
+  <div class="math-block">
+    $$dX = dQ\, W_q^T + dK\, W_k^T + dV\, W_v^T$$
+  </div>
+
+  <!-- ═══════════════════════════════ STEP 3 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">03</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Residual Connection &amp; Layer Normalization</div>
+      <div class="step-module">AddAndNormalization</div>
+    </div>
+  </div>
+
+  <p>Applied <strong>twice per DecoderBlock</strong> — once after attention, once after the FFN.</p>
+
+  <div class="note"><strong>Why residuals?</strong> Without the shortcut $x + \text{Sublayer}(x)$, gradients in deep
+    networks tend to vanish. The residual path creates a gradient "highway" that lets signals travel directly to earlier
+    layers.</div>
+
+  <h3>Math</h3>
+
+  <div class="math-block">
+    $$Z = X_{\text{residual}} + X_{\text{sublayer}}$$
+    $$\mu = \frac{1}{d}\sum_{i=1}^{d} Z_i, \qquad \sigma^2 = \frac{1}{d}\sum_{i=1}^{d}(Z_i - \mu)^2$$
+    $$\hat{Z}_i = \frac{Z_i - \mu}{\sqrt{\sigma^2 + \varepsilon}}, \qquad \varepsilon = 10^{-5}$$
+    $$\text{Output}_i = \gamma_i \hat{Z}_i + \beta_i$$
+  </div>
+
+  <p>$\gamma$ (scale) and $\beta$ (shift) are <strong>learned parameters</strong>, one pair per feature dimension.</p>
+
+  <h3>Manual Backward Pass</h3>
+  <div class="math-block">
+    $$d\gamma = \sum(dY \odot \hat{Z}), \quad d\beta = \sum dY, \quad d\hat{Z} = dY \odot \gamma$$
+    $$dZ_i = \frac{1}{d\sqrt{\sigma^2+\varepsilon}}\!\left(d \cdot d\hat{Z}_i - \sum_j d\hat{Z}_j - \hat{Z}_i \sum_j
+    d\hat{Z}_j \hat{Z}_j\right)$$
+  </div>
+
+  <p>Since $Z = X_{\text{res}} + X_{\text{sub}}$, both branches receive the same gradient:</p>
+  <div class="math-block">
+    $$dX_{\text{residual}} = dZ, \qquad dX_{\text{sublayer}} = dZ$$
+  </div>
+
+  <!-- ═══════════════════════════════ STEP 4 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">04</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Feed-Forward Network with SwiGLU</div>
+      <div class="step-module">FeedForward</div>
+    </div>
+  </div>
+
+  <p>Your model uses <strong>SwiGLU</strong>, a gated activation function also used in Llama and PaLM — more expressive
+    than the original ReLU FFN from "Attention Is All You Need." The gate learns to selectively suppress or amplify
+    information from the value branch.</p>
+
+  <h3>Math</h3>
+  <div class="math-block">
+    $$G = X W_{\text{gate}} + b_{\text{gate}}$$
+    $$V_{\text{proj}} = X W_{\text{value}} + b_{\text{value}}$$
+    $$\text{Swish}(G) = G \cdot \sigma(G), \quad \text{where } \sigma = \text{sigmoid}$$
+    $$H = \text{Swish}(G) \odot V_{\text{proj}} \qquad \text{(gate controls information flow)}$$
+    $$\text{Output} = H\, W_{\text{out}} + b_{\text{out}}$$
+  </div>
+
+  <table>
+    <tr>
+      <th>Weight</th>
+      <th>Shape</th>
+      <th>Role</th>
+    </tr>
+    <tr>
+      <td>$W_{\text{gate}}$</td>
+      <td>$(d,\; d_{ff})$</td>
+      <td>Projects input to gate logits</td>
+    </tr>
+    <tr>
+      <td>$W_{\text{value}}$</td>
+      <td>$(d,\; d_{ff})$</td>
+      <td>Projects input to value vectors</td>
+    </tr>
+    <tr>
+      <td>$W_{\text{out}}$</td>
+      <td>$(d_{ff},\; d)$</td>
+      <td>Projects gated output back to model dim</td>
+    </tr>
+  </table>
+
+  <h3>Manual Backward Pass</h3>
+  <div class="math-block">
+    $$dH = dY\, W_{\text{out}}^T, \quad dW_{\text{out}} = H^T dY, \quad db_{\text{out}} = \sum dY$$
+    $$\text{Swish}'(G) = \sigma(G) + G \cdot \sigma(G)(1 - \sigma(G))$$
+    $$dG = (dH \odot V_{\text{proj}}) \odot \text{Swish}'(G), \quad dV_{\text{proj}} = dH \odot \text{Swish}(G)$$
+    $$dX = dG\, W_{\text{gate}}^T + dV_{\text{proj}}\, W_{\text{value}}^T$$
+  </div>
+
+  <!-- ═══════════════════════════════ STEP 5 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">05</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Output Projection &amp; Cross-Entropy Loss</div>
+      <div class="step-module">_project_logits &amp; _cross_entropy_loss_and_gradient</div>
+    </div>
+  </div>
+
+  <h3>Weight-Tied Output Projection</h3>
+  <p>The final hidden state $H_{\text{final}} \in \mathbb{R}^{B \times L \times d}$ is projected to vocabulary scores
+    using the <strong>same weight matrix as the input embedding table</strong> (transposed). This is called <em>weight
+      tying</em> — it reduces the parameter count and often improves generalization.</p>
+
+  <div class="math-block">
+    $$\text{Logits} = H_{\text{final}}\; E^T + b_{\text{out}}, \qquad \text{Logits} \in \mathbb{R}^{B \times L \times
+    |\mathcal{V}|}$$
+  </div>
+
+  <h3>Cross-Entropy Loss</h3>
+  <p>For numerical stability, the max logit is subtracted before exponentiation:</p>
+  <div class="math-block">
+    $$P_{i,c} = \frac{e^{\,\text{Logits}_{i,c} - \max_v \text{Logits}_{i,v}}}{\sum_v e^{\,\text{Logits}_{i,v} - \max_v
+    \text{Logits}_{i,v}}}$$
+    $$\mathcal{L} = -\frac{1}{N_{\text{active}}} \sum_{i \,\in\, \text{active}} \log P_{i,\, y_i}$$
+  </div>
+
+  <p>Only positions that are <em>not</em> padding contribute to the loss ($N_{\text{active}}$ = number of such
+    positions).</p>
+
+  <h3>Logits Gradient</h3>
+  <p>The gradient is simply "predicted probability minus one-hot target," scaled by the batch size:</p>
+  <div class="math-block">
+    $$\frac{\partial \mathcal{L}}{\partial \text{Logits}_{i,c}} = \begin{cases} \dfrac{P_{i,c} - 1}{N_{\text{active}}} &
+    c = y_i \;\text{and}\; i \in \text{active} \\[8pt] \dfrac{P_{i,c}}{N_{\text{active}}} & c \neq y_i \;\text{and}\; i
+    \in \text{active} \\[8pt] 0 & i \notin \text{active} \end{cases}$$
+  </div>
+
+  <!-- ═══════════════════════════════ STEP 6 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">06</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Backward Pass Through the Network</div>
+      <div class="step-module">DecoderBlock.backward &amp; ShiftedOutputEmbedder.backward</div>
+    </div>
+  </div>
+
+  <p>Gradients flow backward through the network in strict reverse order. The chain rule connects every layer's gradient
+    to the next:</p>
+
+  <pre>dLogits
+  └─► Output Projection backward  →  dH_final, d(EmbeddingTable)
+        └─► DecoderBlock 4 backward
+              └─► AddNorm2.backward  →  dFFN_output + dResidual
+                    └─► FeedForward.backward  →  dNorm1_output
+                          └─► AddNorm1.backward  →  dAttn_output + dResidual
+                                └─► Attention.backward  →  dEmbeddings
+                                      └─► DecoderBlock 3 → 2 → 1 (same pattern)
+                                            └─► Embedder.backward  →  d(EmbeddingTable)</pre>
+
+  <div class="note"><strong>Weight tying note:</strong> The <code>EmbeddingTable</code> gradient is <em>accumulated</em>
+    from two sources: the output projection backward path and the embedding backward path. After both contributions are
+    summed, the padding row gradient is explicitly zeroed out.</div>
+
+  <!-- ═══════════════════════════════ STEP 7 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">07</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Gradient Clipping</div>
+      <div class="step-module">ManualAdamW.clip_grad_norm</div>
+    </div>
+  </div>
+
+  <p>Before updating parameters, the <em>global gradient norm</em> is computed across all parameters. If it exceeds the
+    threshold, every gradient is scaled down uniformly. This prevents "exploding gradients" from destabilizing training
+    in a single bad step.</p>
+
+  <div class="math-block">
+    $$\text{Global Norm} = \sqrt{\sum_{\theta}\; \|\nabla_\theta\|^2}$$
+    $$\text{scale} = \min\!\left(1.0,\; \frac{\text{max\_norm}}{\text{Global Norm} + \varepsilon}\right)$$
+    $$\nabla_\theta \;\leftarrow\; \text{scale} \times \nabla_\theta \quad \forall\; \theta$$
+  </div>
+
+  <!-- ═══════════════════════════════ STEP 8 ══════════════════════════════ -->
+  <div class="step-header">
+    <div class="step-num">08</div>
+    <div class="step-title-wrap">
+      <div class="step-title">Parameter Update — ManualAdamW</div>
+      <div class="step-module">ManualAdamW.step</div>
+    </div>
+  </div>
+
+  <p>AdamW combines three ideas: momentum smoothing, adaptive per-parameter learning rates, and decoupled weight decay.
+    At each timestep $t$ for parameter $\theta$ with gradient $g$:</p>
+
+  <h3>Moment Updates</h3>
+  <div class="math-block">
+    $$m_t = \beta_1 m_{t-1} + (1 - \beta_1)\, g_t \qquad \text{(first moment — smoothed gradient)}$$
+    $$v_t = \beta_2 v_{t-1} + (1 - \beta_2)\, g_t^2 \qquad \text{(second moment — smoothed squared gradient)}$$
+  </div>
+
+  <h3>Bias Correction</h3>
+  <p>In the first few steps $m$ and $v$ are biased toward zero because they were initialized at zero. Dividing by $(1 -
+    \beta^t)$ corrects this:</p>
+  <div class="math-block">
+    $$\hat{m}_t = \frac{m_t}{1 - \beta_1^t}, \qquad \hat{v}_t = \frac{v_t}{1 - \beta_2^t}$$
+  </div>
+
+  <h3>Parameter Update</h3>
+  <div class="math-block">
+    $$\theta_t = \theta_{t-1} \;-\; \underbrace{\eta\, \lambda\, \theta_{t-1}}_{\text{weight decay}} \;-\;
+    \underbrace{\eta \cdot \frac{\hat{m}_t}{\sqrt{\hat{v}_t} + \varepsilon}}_{\text{adaptive step}}$$
+  </div>
+
+  <table>
+    <tr>
+      <th>Parameter</th>
+      <th>Default</th>
+      <th>Purpose</th>
+    </tr>
+    <tr>
+      <td>$\eta$ (learning rate)</td>
+      <td>$5 \times 10^{-4}$</td>
+      <td>Controls overall step size</td>
+    </tr>
+    <tr>
+      <td>$\beta_1$</td>
+      <td>0.9</td>
+      <td>Momentum decay rate</td>
+    </tr>
+    <tr>
+      <td>$\beta_2$</td>
+      <td>0.999</td>
+      <td>Variance smoothing rate</td>
+    </tr>
+    <tr>
+      <td>$\varepsilon$</td>
+      <td>$10^{-8}$</td>
+      <td>Prevents division by zero</td>
+    </tr>
+    <tr>
+      <td>$\lambda$ (weight decay)</td>
+      <td>0.0</td>
+      <td>L2 regularization strength</td>
+    </tr>
+  </table>
+
+  <!-- ═══════════════════════════════ CHEAT SHEET ══════════════════════════════ -->
+  <h2>One Complete Training Iteration — Cheat Sheet</h2>
+
+  <ul class="checklist">
+    <li>
+      <div class="step-badge">1</div>
+      <div>
+        <strong>Load a batch of token sequences</strong>
+        <div class="checklist-module">PromptResponseDataset</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">2</div>
+      <div>
+        <strong>Shift right, embed, add sinusoidal positions</strong>
+        <div class="checklist-module">ShiftedOutputEmbedder.forward()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">3a</div>
+      <div>
+        <strong>Causal multi-head self-attention (×4 blocks)</strong>
+        <div class="checklist-module">MultiHeadSelfAttention.forward()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">3b</div>
+      <div>
+        <strong>Add residual + LayerNorm after attention</strong>
+        <div class="checklist-module">AddAndNormalization.forward()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">3c</div>
+      <div>
+        <strong>Feed-forward with SwiGLU gate (×4 blocks)</strong>
+        <div class="checklist-module">FeedForward.forward()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">3d</div>
+      <div>
+        <strong>Add residual + LayerNorm after FFN</strong>
+        <div class="checklist-module">AddAndNormalization.forward()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">4</div>
+      <div>
+        <strong>Project final hidden states to vocabulary logits (weight-tied)</strong>
+        <div class="checklist-module">_project_logits()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">5</div>
+      <div>
+        <strong>Compute cross-entropy loss over active positions</strong>
+        <div class="checklist-module">_cross_entropy_loss_and_gradient()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">6</div>
+      <div>
+        <strong>Backward pass through all 4 blocks (reverse order)</strong>
+        <div class="checklist-module">DecoderBlock.backward() × 4</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">7</div>
+      <div>
+        <strong>Backward through the embedder</strong>
+        <div class="checklist-module">ShiftedOutputEmbedder.backward()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">8</div>
+      <div>
+        <strong>Clip global gradient norm</strong>
+        <div class="checklist-module">ManualAdamW.clip_grad_norm()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">9</div>
+      <div>
+        <strong>Update every parameter with AdamW</strong>
+        <div class="checklist-module">ManualAdamW.step()</div>
+      </div>
+    </li>
+    <li>
+      <div class="step-badge">10</div>
+      <div>
+        <strong>Zero all gradients for the next iteration</strong>
+        <div class="checklist-module">ManualAdamW.zero_grad()</div>
+      </div>
+    </li>
+  </ul>
+
+</body>
+
+</html>
